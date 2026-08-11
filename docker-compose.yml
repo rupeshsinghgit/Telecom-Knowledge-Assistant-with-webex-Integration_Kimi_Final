@@ -1,0 +1,80 @@
+services:
+
+  # ── PostgreSQL + pgvector ────────────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rag-postgres-webex
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ragdb
+      POSTGRES_USER: raguser
+      POSTGRES_PASSWORD: ragpassword
+    ports:
+      - "5435:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raguser -d ragdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── pgAdmin (optional UI) ────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: rag-pgadmin-webex
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@rag.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5055:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Telecom Knowledge Assistant (Spring Boot app) ───────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-app
+    restart: unless-stopped
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ragdb
+      SPRING_DATASOURCE_USERNAME: raguser
+      SPRING_DATASOURCE_PASSWORD: ragpassword
+      # vLLM/TGI containers run alongside this stack (or on the host) --
+      # host.docker.internal lets the app container reach them.
+      LLM_CHAT_BASE_URL: ${LLM_CHAT_BASE_URL}
+      LLM_CHAT_MODEL: ${LLM_CHAT_MODEL}
+      LLM_CHAT_API_KEY: ${LLM_CHAT_API_KEY}
+      LLM_EMBEDDING_BASE_URL: ${LLM_EMBEDDING_BASE_URL}
+      LLM_EMBEDDING_MODEL: ${LLM_EMBEDDING_MODEL}
+      LLM_EMBEDDING_API_KEY: ${LLM_EMBEDDING_API_KEY}
+      PGVECTOR_DIMENSION: ${PGVECTOR_DIMENSION:-4096}
+      WEBEX_BOT_TOKEN: ${WEBEX_BOT_TOKEN}
+      WEBEX_BOT_EMAIL: ${WEBEX_BOT_EMAIL}
+      WEBEX_WEBHOOK_SECRET: ${WEBEX_WEBHOOK_SECRET}
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── ngrok tunnel (exposes the app publicly for the Webex webhook) ──────────
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: rag-ngrok
+    restart: unless-stopped
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    command: http app:8084 --log=stdout
+    ports:
+      - "4040:4040"
+    depends_on:
+      - app
+
+volumes:
+  pgdata:

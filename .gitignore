@@ -1,0 +1,12 @@
+target/
+*.class
+.idea/
+*.iml
+.vscode/
+
+# Local override files - if you ever create one of these for convenience
+# (e.g. hardcoding real creds so you don't have to set env vars every time),
+# it must never be committed.
+application*.yml
+application-*-local.yml
+*.env

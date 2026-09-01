@@ -1,7 +1,9 @@
 package com.rag.controller;
 
 import com.rag.model.DocumentRecord;
+import com.rag.model.IngestionJob;
 import com.rag.repository.DocumentRepository;
+import com.rag.repository.IngestionJobRepository;
 import com.rag.service.IngestionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,36 +27,49 @@ public class IngestionController {
 
     private final IngestionService ingestionService;
     private final DocumentRepository documentRepository;
+    private final IngestionJobRepository jobRepository;
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Operation(summary = "Upload a file (PDF, DOCX, XLSX/XLS, TXT)")
-    public ResponseEntity<DocumentRecord> uploadFile(
-            @RequestPart("file") MultipartFile file) {
+    @Operation(
+            summary = "Upload a file (PDF, DOCX, XLSX/XLS, TXT) for async ingestion",
+            description = "Returns immediately with 202 Accepted and a job id. " +
+                    "Poll GET /api/documents/jobs/{jobId} for progress/status."
+    )
+    public ResponseEntity<IngestionJob> uploadFile(@RequestPart("file") MultipartFile file) {
         try {
-            DocumentRecord record = ingestionService.ingestFile(file);
-            return ResponseEntity.ok(record);
+            IngestionJob job = ingestionService.submitFileIngestion(file);
+            return ResponseEntity.accepted().body(job);
         } catch (IOException e) {
-            log.error("Failed to ingest file: {}", file.getOriginalFilename(), e);
+            log.error("Failed to read uploaded file: {}", file.getOriginalFilename(), e);
             return ResponseEntity.internalServerError().build();
         }
     }
 
     @PostMapping("/url")
-    @Operation(summary = "Ingest a web page by URL")
+    @Operation(
+            summary = "Ingest a web page by URL for async ingestion",
+            description = "Returns immediately with 202 Accepted and a job id. " +
+                    "Poll GET /api/documents/jobs/{jobId} for progress/status."
+    )
     public ResponseEntity<?> ingestUrl(@RequestBody Map<String, String> body) {
         String url = body.get("url");
         if (url == null || url.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "URL is required"));
         }
         try {
-            DocumentRecord record = ingestionService.ingestUrl(url);
-            return ResponseEntity.ok(record);
+            IngestionJob job = ingestionService.submitUrlIngestion(url);
+            return ResponseEntity.accepted().body(job);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        } catch (IOException e) {
-            log.error("Failed to ingest URL: {}", url, e);
-            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
         }
+    }
+
+    @GetMapping("/jobs/{jobId}")
+    @Operation(summary = "Check status/progress of an ingestion job")
+    public ResponseEntity<IngestionJob> getJobStatus(@PathVariable String jobId) {
+        return jobRepository.findById(jobId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
     @GetMapping

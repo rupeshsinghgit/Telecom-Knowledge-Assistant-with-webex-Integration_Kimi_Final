@@ -1,86 +1,70 @@
 package com.rag.service;
 
-import com.rag.document.DocumentLoaderService;
 import com.rag.document.DocumentType;
-import com.rag.model.DocumentRecord;
+import com.rag.model.IngestionJob;
+import com.rag.model.IngestionJobStatus;
 import com.rag.repository.DocumentRepository;
-import dev.langchain4j.data.document.Document;
-import dev.langchain4j.data.document.DocumentSplitter;
-import dev.langchain4j.data.document.splitter.DocumentSplitters;
-import dev.langchain4j.data.embedding.Embedding;
-import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.model.embedding.EmbeddingModel;
-import dev.langchain4j.store.embedding.EmbeddingStore;
+import com.rag.repository.IngestionJobRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.util.List;
 
+/**
+ * Entry point for ingestion requests. Deliberately thin: creates the IngestionJob row and
+ * immediately delegates the actual work to IngestionAsyncExecutor -- a SEPARATE Spring bean.
+ *
+ * This separation is required, not stylistic. Spring's @Async works via a dynamic proxy
+ * wrapped around the bean. If the @Async worker method lived here and were called as
+ * `this.processFileAsync(...)` (self-invocation), the call would bypass the proxy entirely
+ * and execute synchronously, on the caller's HTTP request thread -- silently defeating async
+ * processing while still compiling and looking correct. Keeping the @Async methods on a
+ * different injected bean forces the call through the proxy, so it's actually dispatched to
+ * the ingestionTaskExecutor thread pool.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class IngestionService {
 
-    private final DocumentLoaderService loaderService;
-    private final EmbeddingModel embeddingModel;
-    private final EmbeddingStore<TextSegment> embeddingStore;
+    private final IngestionAsyncExecutor asyncExecutor;
     private final DocumentRepository documentRepository;
+    private final IngestionJobRepository jobRepository;
 
-    @Value("${rag.chunk-size}")
-    private int chunkSize;
-
-    @Value("${rag.chunk-overlap}")
-    private int chunkOverlap;
-
-    // ── Ingest uploaded file ─────────────────────────────────────────────────
-    public DocumentRecord ingestFile(MultipartFile file) throws IOException {
+    public IngestionJob submitFileIngestion(MultipartFile file) throws IOException {
         String filename = file.getOriginalFilename();
-        log.info("Ingesting file: {}", filename);
+        byte[] content = file.getBytes();
+        DocumentType type = DocumentType.fromFilename(filename);
 
-        Document document = loaderService.load(file);
-        return processDocument(document, filename, DocumentType.fromFilename(filename).name());
+        IngestionJob job = jobRepository.save(IngestionJob.builder()
+                .filename(filename)
+                .source(filename)
+                .type(type.name())
+                .status(IngestionJobStatus.PENDING)
+                .build());
+
+        asyncExecutor.processFileAsync(job.getId(), content, filename, type);
+        return job;
     }
 
-    // ── Ingest web URL ───────────────────────────────────────────────────────
-    public DocumentRecord ingestUrl(String url) throws IOException {
-        log.info("Ingesting URL: {}", url);
-
+    public IngestionJob submitUrlIngestion(String url) {
+        // Dedup check stays synchronous/upfront so a duplicate is rejected immediately with a
+        // 400, rather than only surfacing as a FAILED job later.
         if (documentRepository.existsBySource(url)) {
             log.warn("URL already ingested: {}", url);
             throw new IllegalArgumentException("URL already ingested: " + url);
         }
 
-        Document document = loaderService.loadUrl(url);
-        return processDocument(document, url, "URL");
-    }
+        IngestionJob job = jobRepository.save(IngestionJob.builder()
+                .filename(url)
+                .source(url)
+                .type("URL")
+                .status(IngestionJobStatus.PENDING)
+                .build());
 
-    // ── Core processing ──────────────────────────────────────────────────────
-    private DocumentRecord processDocument(Document document, String source, String type) {
-        // 1. Split into chunks
-        DocumentSplitter splitter = DocumentSplitters.recursive(chunkSize, chunkOverlap);
-        List<TextSegment> segments = splitter.split(document);
-        log.info("Split '{}' into {} chunks", source, segments.size());
-
-        // 2. Embed chunks
-        List<Embedding> embeddings = embeddingModel.embedAll(segments).content();
-        log.info("Generated {} embeddings", embeddings.size());
-
-        // 3. Store in pgvector
-        embeddingStore.addAll(embeddings, segments);
-        log.info("Stored embeddings in pgvector for '{}'", source);
-
-        // 4. Save metadata record
-        DocumentRecord record = DocumentRecord.builder()
-                .name(source)
-                .type(type)
-                .source(source)
-                .chunkCount(segments.size())
-                .build();
-
-        return documentRepository.save(record);
+        asyncExecutor.processUrlAsync(job.getId(), url);
+        return job;
     }
 }

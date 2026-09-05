@@ -53,6 +53,7 @@ public class IngestionController {
     )
     public ResponseEntity<?> ingestUrl(@RequestBody Map<String, String> body) {
         String url = body.get("url");
+        System.out.print("Got URL: "+url);
         if (url == null || url.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "URL is required"));
         }

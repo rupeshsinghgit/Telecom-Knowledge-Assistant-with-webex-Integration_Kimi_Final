@@ -6,6 +6,38 @@ A complete reference for understanding the architecture, the network/SSL issue w
 
 ## 1. Complete Architecture
 
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         REST API (Spring Boot)                   │
+│  POST /api/documents/upload   POST /api/documents/url           │
+│  POST /api/query                                                  │
+└────────────────────┬──────────────────────┬─────────────────────┘
+                     │                      │
+          ┌──────────▼──────────┐  ┌────────▼──────────┐
+          │  IngestionService   │  │  RagQueryService   │
+          │                     │  │                    │
+          │ 1. Load document    │  │ 1. Embed question  │
+          │ 2. Split to chunks  │  │ 2. Search pgvector │
+          │ 3. Embed chunks     │  │ 3. Build prompt    │
+          │ 4. Store pgvector   │  │ 4. Call llama3     │
+          └──────────┬──────────┘  └────────┬───────────┘
+                     │                      │
+          ┌──────────▼──────────────────────▼───────────┐
+          │            Ollama  (localhost:11434)          │
+          │   • qwen3			  (embeddings)            │
+          │   • kimi	            (generation)          │
+          └──────────────────────────────────────────────┘
+                     │
+          ┌──────────▼──────────────────────────────────┐
+          │         PostgreSQL 16 + pgvector              │
+          │   document_embeddings  (vectors + text)       │
+          │   document_records     (metadata)             │
+          └─────────────────────────────────────────────-┘
+```
+
+
 ### 1.1 High-level component map
 
 ```mermaid
@@ -312,4 +344,13 @@ curl -X POST http://localhost:8084/api/query -H "Content-Type: application/json"
 # Check ingested document count
 # (run in DBeaver, connected to localhost:5435 / db "ragdb")
 SELECT COUNT(*) FROM document_embeddings;
+```
+
+## API Reference
+
+### Ingest a PDF / DOCX / Excel / TXT file
+
+```bash
+curl -X POST http://localhost:8080/api/documents/upload \
+  -F "file=@/path/to/document.pdf"
 ```

@@ -138,6 +138,14 @@
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
             <version>2.6.0</version>
         </dependency>
+        <!-- Add inside <dependencies>. No LangChain4j upgrade needed (stays 0.35.0). -->
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+        <!-- After adding, run: mvn dependency:tree | grep -i -E "jackson|reactor"
+             and confirm no Jackson/Reactor version conflicts with Spring Boot 3.3.4. -->
 
         <!-- Test -->
         <dependency>

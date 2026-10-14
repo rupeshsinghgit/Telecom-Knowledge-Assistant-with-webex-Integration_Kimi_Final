@@ -40,7 +40,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: rag-app
-    restart: unless-stopped
+    restart: unless-stopped    
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/ragdb
       SPRING_DATASOURCE_USERNAME: raguser
@@ -57,6 +57,7 @@ services:
       WEBEX_BOT_TOKEN: ${WEBEX_BOT_TOKEN}
       WEBEX_BOT_EMAIL: ${WEBEX_BOT_EMAIL}
       WEBEX_WEBHOOK_SECRET: ${WEBEX_WEBHOOK_SECRET}
+      MCP_DEBUG_ENDPOINTS: "true"
     ports:
       - "8084:8084"
     depends_on:
@@ -75,6 +76,29 @@ services:
       - "4040:4040"
     depends_on:
       - app
+
+   # 1) MCP configuration
+  mcp-atlassian:
+    image: ghcr.io/sooperset/mcp-atlassian:latest
+    container_name: mcp-atlassian
+    restart: unless-stopped
+    environment:
+      TRANSPORT: streamable-http
+      PORT: "9000"
+      HOST: 0.0.0.0
+      CONFLUENCE_URL: ${CONFLUENCE_URL}
+      CONFLUENCE_PERSONAL_TOKEN: ${CONFLUENCE_PERSONAL_TOKEN}   # from .env, NOT hardcoded
+      ENABLED_TOOLS: confluence_search,confluence_get_page,confluence_get_page_children
+      # Corporate CA for bass.netcracker.com (PEM format; convert .cer with openssl if it's DER)
+      REQUESTS_CA_BUNDLE: /certs/ca-bundle.pem
+      SSL_CERT_FILE: /certs/ca-bundle.pem
+      AGENT_ENABLED: "true"
+      MCP_ENABLED: "true"
+      MCP_BASE_URL: http://mcp-atlassian:9000
+    volumes:
+      - ./certs/ca-bundle.pem:/certs/ca-bundle.pem:ro
+    # no "ports:" — only the app container needs to reach it
+
 
 volumes:
   pgdata:

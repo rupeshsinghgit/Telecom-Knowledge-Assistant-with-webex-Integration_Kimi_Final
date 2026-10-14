@@ -26,6 +26,10 @@ public class RagQueryService {
     private final ChatLanguageModel chatLanguageModel;
     private final EmbeddingModel embeddingModel;
     private final EmbeddingStore<TextSegment> embeddingStore;
+    private final AgentQueryService agentQueryService;
+
+    @Value("${agent.enabled:false}")
+    private boolean agentEnabled;
 
     @Value("${rag.max-results}")
     private int maxResults;
@@ -36,7 +40,23 @@ public class RagQueryService {
     @Value("${rag.no-answer-instruction:If the answer is not in the context, say that you couldn't find a clear answer to that in the current documentation, and suggest the user rephrase or check with a colleague.}")
     private String noAnswerInstruction;
 
+    /**
+     * Entry point used by QueryController and the Webex bot (unchanged signature).
+     * agent.enabled=true  → LLM decides between RAG and MCP tools; on any failure falls back to classic RAG.
+     * agent.enabled=false → exactly the previous behaviour.
+     */
     public RagResponse query(String question) {
+        if (agentEnabled) {
+            try {
+                return agentQueryService.query(question);
+            } catch (Exception e) {
+                log.warn("Agent path failed, falling back to classic RAG: {}", e.toString());
+            }
+        }
+        return classicQuery(question);
+    }
+
+    private RagResponse classicQuery(String question) {
         log.info("RAG query: {}", question);
 
         // 1. Embed the question
@@ -67,12 +87,12 @@ public class RagQueryService {
 
         // 4. Build RAG prompt
         String prompt = buildPrompt(question, context);
-        log.info ("###Final Question1: ", question);
-        log.info ("###Final context1: ", context);
-        log.info ("###Final prompt 1: ", prompt);
+        log.debug("###Final Question1: {}", question);
+        log.debug("###Final context1: {}", context);
+        log.debug("###Final prompt: {}", prompt);
 
 
-        // 5. Generate answer using llama3
+        // 5. Generate answer
         Response<AiMessage> response = chatLanguageModel.generate(UserMessage.from(prompt));
         String answer = response.content().text();
         log.info("Generated answer (length={})", answer.length());
@@ -91,8 +111,6 @@ public class RagQueryService {
     }
 
     private String buildPrompt(String question, String context) {
-        log.info ("###Final Question:2 ", question);
-        log.info ("###Final context:2 ", context);
         return """
                 You are a helpful assistant. Use ONLY the context below to answer the question.
                 %s
